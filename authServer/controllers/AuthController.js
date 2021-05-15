@@ -4,7 +4,8 @@ const bcrypt = require('bcryptjs');
 const promisify = require('es6-promisify');
 const jwt = require('jsonwebtoken');
 const md5 = require('md5');
-const { genJwtToken } = require("./jwt_helper");
+var store = require('store');
+const { genJwtToken } = require('./jwt_helper');
 
 const re = /(\S+)\s+(\S+)/;
 
@@ -17,10 +18,12 @@ function parseAuthHeader(header) {
     return null;
   }
   const matches = header.match(re);
-  return matches && {
-    scheme: matches[1],
-    value: matches[2]
-  };
+  return (
+    matches && {
+      scheme: matches[1],
+      value: matches[2],
+    }
+  );
 }
 
 const tokenFromAuthHeader = function (authScheme) {
@@ -46,6 +49,30 @@ const appTokenFromRequest = tokenFromAuthHeader(BEARER_AUTH_SCHEME);
 // The tokens are for validation
 const intrmTokenCache = {};
 
+// app token to validate the request is coming from the authenticated server only.
+const appTokenDB = {
+  sso_consumer: 'l1Q7zkOL59cRqWBkQ12ZiGVW2DBL',
+  simple_sso_consumer: '1g0jJwGmRQhJwvwNOrY4i90kD0m',
+};
+
+const supAppPolicy = {
+  sso_consumer: { role: 'admin', shareEmail: true },
+  simple_sso_consumer: { role: 'user', shareEmail: false },
+};
+
+const originAppName = {
+  'http://localhost:3000': 'sso_consumer',
+  'http://localhost:3020': 'sso_consumer',
+  'http://localhost:4200': 'simple_sso_consumer',
+};
+
+const allowedOrigin = {
+  'http://localhost:4200': true,
+  'http://localhost:3000': true,
+  'http://localhost:3020': true,
+  'http://localhost:8080': false,
+};
+
 const fillIntrmTokenCache = (origin, id, intrmToken) => {
   intrmTokenCache[intrmToken] = [id, originAppName[origin]];
 };
@@ -59,25 +86,29 @@ const storeApplicationInCache = (origin, id, intrmToken) => {
     sessionApp[id][originAppName[origin]] = true;
     fillIntrmTokenCache(origin, id, intrmToken);
   }
-  console.log({
-    ...sessionApp
-  }, {
-    ...sessionUser
-  }, {
-    intrmTokenCache
-  });
+  console.log(
+    {
+      ...sessionApp,
+    },
+    {
+      ...sessionUser,
+    },
+    {
+      intrmTokenCache,
+    }
+  );
 };
 
-const generatePayload = (ssoToken) => {
+const generatePayload = (ssoToken, req) => {
   const globalSessionToken = intrmTokenCache[ssoToken][0];
   const appName = intrmTokenCache[ssoToken][1];
   const userEmail = sessionUser[globalSessionToken];
-  const user = userDB[userEmail];
-  const appPolicy = user.appPolicy[appName];
+  const user = store.get('user');
+  const appPolicy = supAppPolicy[appName];
   const email = appPolicy.shareEmail === true ? userEmail : undefined;
   const payload = {
     ...{
-      ...appPolicy
+      ...appPolicy,
     },
     ...{
       email,
@@ -87,24 +118,24 @@ const generatePayload = (ssoToken) => {
       globalSessionID: globalSessionToken,
     },
   };
+  console.log(ssoToken, payload, '<-----<-----');
   return payload;
 };
 
 exports.verifySSOToken = async (req, res, next) => {
   const appToken = appTokenFromRequest(req);
-  const {
-    ssoToken
-  } = req.query;
+  const { ssoToken } = req.query;
   // if the application token is not present or ssoToken request is invalid
   // if the ssoToken is not present in the cache some is
   // smart.
+  console.log(appToken, ssoToken, intrmTokenCache);
   if (
     appToken == null ||
     ssoToken == null ||
     intrmTokenCache[ssoToken] == null
   ) {
     return res.status(400).json({
-      message: 'badRequest'
+      message: 'badRequest',
     });
   }
 
@@ -117,17 +148,17 @@ exports.verifySSOToken = async (req, res, next) => {
     sessionApp[globalSessionToken][appName] !== true
   ) {
     return res.status(403).json({
-      message: 'Unauthorized'
+      message: 'Unauthorized',
     });
   }
   // checking if the token passed has been generated
-  const payload = generatePayload(ssoToken);
+  const payload = generatePayload(ssoToken, req);
 
   const token = await genJwtToken(payload);
   // delete the itremCache key for no futher use,
   delete intrmTokenCache[ssoToken];
   return res.status(200).json({
-    token
+    token,
   });
 };
 
@@ -135,17 +166,14 @@ const sessionUser = {};
 const sessionApp = {};
 
 exports.getLogin = (req, res, next) => {
-  const {
-    serviceURL
-  } = req.query;
+  store.set('serviceURL', req.query.serviceURL);
+  const serviceURL = req.query.serviceURL || store.get('serviceURL');
   if (serviceURL != null) {
     const url = new URL(serviceURL);
-    if (alloweOrigin[url.origin] !== true) {
-      return res
-        .status(400)
-        .json({
-          message: 'Your are not allowed to access the sso-server'
-        });
+    if (allowedOrigin[url.origin] !== true) {
+      return res.status(400).json({
+        message: 'Your are not allowed to access the SSO Server',
+      });
     }
   }
   if (req.session.user != null && serviceURL == null) {
@@ -165,43 +193,42 @@ exports.getLogin = (req, res, next) => {
 };
 
 exports.login = (req, res, next) => {
-  const {
-    serviceURL
-  } = req.query;
-  const {
-    email,
-    password
-  } = req.body;
-  console.log('Logging in .....');
+  const serviceURL = req.query.serviceURL || store.get('serviceURL');
+  const { email, password } = req.body;
 
   User.findOne({
-    email: email
+    email: email,
   }).then((user) => {
     if (user) {
       bcrypt.compare(password, user.password, function (err, isMatch) {
         if (!isMatch) {
           console.log('Auth Error');
           res.render('login', {
-            message: 'Auth Error'
+            message: 'Auth Error',
           });
         }
         if (isMatch) {
-          jwt.sign({
-              email: email
+          store.set('user', user);
+          jwt.sign(
+            {
+              email: email,
             },
-            'secretkey', {
-              expiresIn: '10h'
+            'secretkey',
+            {
+              expiresIn: '10h',
             },
             (err, token) => {
               res.cookie(
-                'ssonode', {
+                'ssonode',
+                {
                   status: true,
                   data: {
                     user: user,
                     token: token,
                   },
-                }, {
-                  maxAge: 180 * 60 * 1000
+                },
+                {
+                  maxAge: 180 * 60 * 1000,
                 }
               );
               req.session.user = user._id;
@@ -220,16 +247,14 @@ exports.login = (req, res, next) => {
     } else {
       console.log('user does not exist');
       res.render('login', {
-        message: 'Auth Error'
+        message: 'Auth Error',
       });
     }
   });
 };
 
 exports.register = (req, res, next) => {
-  const {
-    serviceURL
-  } = req.query;
+  const { serviceURL } = req.query;
   console.log('Registering ...', req.body);
   const email = req.body.email;
   const name = req.body.name;
@@ -238,8 +263,8 @@ exports.register = (req, res, next) => {
   if (email && name && password) {
     User.findOne({
       email: {
-        $regex: email
-      }
+        $regex: email,
+      },
     }).then((user) => {
       if (user) {
         console.log('Email already exists');
@@ -254,14 +279,16 @@ exports.register = (req, res, next) => {
         }).save((err) => {
           if (err) throw err;
           res.cookie(
-            'ssonode', {
+            'ssonode',
+            {
               status: true,
               data: {
                 user: user,
                 token: token,
               },
-            }, {
-              maxAge: 180 * 60 * 1000
+            },
+            {
+              maxAge: 180 * 60 * 1000,
             }
           );
           res.json({
@@ -279,7 +306,7 @@ exports.register = (req, res, next) => {
     console.log('Error');
     // alert('Please Fill All Fields');
     res.json({
-      status: false
+      status: false,
     });
   }
 };
@@ -301,7 +328,7 @@ exports.isLoggedIn = (req, res, next) => {
 
 exports.forgot = async (req, res) => {
   const user = await User.findOne({
-    email: req.body.email
+    email: req.body.email,
   });
 
   if (!user) {
@@ -331,7 +358,7 @@ exports.reset = async (req, res) => {
   const user = await User.findOne({
     resetPasswordToken: req.params.token,
     resetPasswordExpires: {
-      $gt: Date.now()
+      $gt: Date.now(),
     },
   });
   if (!user) {
@@ -340,7 +367,7 @@ exports.reset = async (req, res) => {
   }
 
   res.render('reset', {
-    title: 'Reset Your Password'
+    title: 'Reset Your Password',
   });
 };
 
@@ -358,7 +385,7 @@ exports.update = async (req, res) => {
   const user = await User.findOne({
     resetPasswordToken: req.params.token,
     resetPasswordExpires: {
-      $gt: Date.now()
+      $gt: Date.now(),
     },
   });
   if (!user) {

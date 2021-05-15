@@ -3,6 +3,6 @@ const router = express.Router();
 
 const authController = require("../controllers/AuthController");
 
-router.get('/verifytoken', authController.getLogin);
+router.get('/verifytoken', authController.verifySSOToken);
 
 module.exports = router;
