@@ -2,9 +2,19 @@ const express = require('express');
 const app = express();
 const session = require('express-session');
 const path = require('path');
+const mongoose = require('mongoose');
 const hbs = require('express-handlebars');
 const config = require('./config');
-const { port, secret } = require('./config');
+const { port, secret, database } = require('./config');
+
+mongoose.connect(database.url);
+mongoose.connection.on('error', (err) => {
+  console.error(`🙅 🚫 🙅 🚫 🙅 🚫 🙅 🚫 → ${err.message}`);
+});
+const loginRouter = require('./routes/login');
+const registerRouter = require('./routes/register');
+const authRouter = require('./routes/index');
+
 
 app.use(
   session({
@@ -19,18 +29,22 @@ app.use((req, res, next) => {
 });
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
-// app.set('views', path.join(__dirname, 'views'));
+app.set('views', path.join(__dirname, 'views'));
 app.engine('.hbs', hbs({extname: '.hbs'}));
 app.set('view engine', '.hbs');
 
-app.use('/', (req, res, next) => {
+app.get('/', (req, res, next) => {
   const user = req.session.user || 'Unauthenticated';
   res.render('home', {
     user: `SSO-Server ${user}`,
     title: 'SSO-Server | Home',
   });
 });
+app.use('/login', loginRouter);
+app.use('/register', registerRouter);
+app.use('/auth', authRouter);
 
 app.use((req, res, next) => {
   const err = new Error('Resource Not Found');

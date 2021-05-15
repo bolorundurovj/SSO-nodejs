@@ -9,7 +9,10 @@ if (!isProduction) {
 
 const port = process.env.PORT;
 
+const keys = require("./keys");
+
 module.exports = {
+  keys: keys,
   database: {
     url: process.env.MONGO_URL
   },
