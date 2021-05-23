@@ -15,7 +15,6 @@ const loginRouter = require('./routes/login');
 const registerRouter = require('./routes/register');
 const authRouter = require('./routes/index');
 
-
 app.use(
   session({
     secret: secret,
@@ -23,10 +22,10 @@ app.use(
     saveUninitialized: true,
   })
 );
-app.use((req, res, next) => {
-  console.log(req.session);
-  next();
-});
+// app.use((req, res, next) => {
+//   console.log(req.session);
+//   next();
+// });
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));

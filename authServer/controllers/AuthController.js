@@ -1,23 +1,23 @@
 const User = require('../models/User');
-const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const promisify = require('es6-promisify');
 const jwt = require('jsonwebtoken');
 const md5 = require('md5');
 var store = require('store');
 const { genJwtToken } = require('./jwt_helper');
 
-const re = /(\S+)\s+(\S+)/;
+const regex = /(\S+)\s+(\S+)/;
 
 // Note: Express http converts all headers to lower case.
 const AUTH_HEADER = 'authorization';
 const BEARER_AUTH_SCHEME = 'bearer';
 
+// Validate auth header
 function parseAuthHeader(header) {
+  // header = Bearer 17273746hddg773
   if (typeof header !== 'string') {
     return null;
   }
-  const matches = header.match(re);
+  const matches = header.match(regex);
   return (
     matches && {
       scheme: matches[1],
@@ -26,6 +26,7 @@ function parseAuthHeader(header) {
   );
 }
 
+// Get bearer token fron Authentication Header
 const tokenFromAuthHeader = function (authScheme) {
   authScheme = authScheme.toLowerCase();
   return function (request) {
@@ -40,9 +41,6 @@ const tokenFromAuthHeader = function (authScheme) {
   };
 };
 
-const fromAuthHeaderAsBearerToken = function () {
-  return fromAuthHeaderWithScheme(BEARER_AUTH_SCHEME);
-};
 
 const appTokenFromRequest = tokenFromAuthHeader(BEARER_AUTH_SCHEME);
 
@@ -55,7 +53,7 @@ const appTokenDB = {
   simple_sso_consumer: '1g0jJwGmRQhJwvwNOrY4i90kD0m',
 };
 
-const supAppPolicy = {
+const appPolicies = {
   sso_consumer: { role: 'admin', shareEmail: true },
   simple_sso_consumer: { role: 'user', shareEmail: false },
 };
@@ -66,7 +64,7 @@ const originAppName = {
   'http://localhost:4200': 'simple_sso_consumer',
 };
 
-const allowedOrigin = {
+const allowedOrigins = {
   'http://localhost:4200': true,
   'http://localhost:3000': true,
   'http://localhost:3020': true,
@@ -86,17 +84,17 @@ const storeApplicationInCache = (origin, id, intrmToken) => {
     sessionApp[id][originAppName[origin]] = true;
     fillIntrmTokenCache(origin, id, intrmToken);
   }
-  console.log(
-    {
-      ...sessionApp,
-    },
-    {
-      ...sessionUser,
-    },
-    {
-      intrmTokenCache,
-    }
-  );
+  // console.log(
+  //   {
+  //     ...sessionApp,
+  //   },
+  //   {
+  //     ...sessionUser,
+  //   },
+  //   {
+  //     intrmTokenCache,
+  //   }
+  // );
 };
 
 const generatePayload = (ssoToken, req) => {
@@ -104,7 +102,7 @@ const generatePayload = (ssoToken, req) => {
   const appName = intrmTokenCache[ssoToken][1];
   const userEmail = sessionUser[globalSessionToken];
   const user = store.get('user');
-  const appPolicy = supAppPolicy[appName];
+  const appPolicy = appPolicies[appName];
   const email = appPolicy.shareEmail === true ? userEmail : undefined;
   const payload = {
     ...{
@@ -118,7 +116,6 @@ const generatePayload = (ssoToken, req) => {
       globalSessionID: globalSessionToken,
     },
   };
-  console.log(ssoToken, payload, '<-----<-----');
   return payload;
 };
 
@@ -128,7 +125,7 @@ exports.verifySSOToken = async (req, res, next) => {
   // if the application token is not present or ssoToken request is invalid
   // if the ssoToken is not present in the cache some is
   // smart.
-  console.log(appToken, ssoToken, intrmTokenCache);
+  // console.log(appToken, ssoToken, intrmTokenCache);
   if (
     appToken == null ||
     ssoToken == null ||
@@ -165,12 +162,12 @@ exports.verifySSOToken = async (req, res, next) => {
 const sessionUser = {};
 const sessionApp = {};
 
-exports.getLogin = (req, res, next) => {
+exports.getLoginPage = (req, res, next) => {
   store.set('serviceURL', req.query.serviceURL);
   const serviceURL = req.query.serviceURL || store.get('serviceURL');
   if (serviceURL != null) {
     const url = new URL(serviceURL);
-    if (allowedOrigin[url.origin] !== true) {
+    if (allowedOrigins[url.origin] !== true) {
       return res.status(400).json({
         message: 'Your are not allowed to access the SSO Server',
       });
@@ -192,7 +189,8 @@ exports.getLogin = (req, res, next) => {
   });
 };
 
-exports.login = (req, res, next) => {
+exports.loginUser = (req, res, next) => {
+  // Get URL of client and store in app
   const serviceURL = req.query.serviceURL || store.get('serviceURL');
   const { email, password } = req.body;
 
@@ -202,10 +200,7 @@ exports.login = (req, res, next) => {
     if (user) {
       bcrypt.compare(password, user.password, function (err, isMatch) {
         if (!isMatch) {
-          console.log('Auth Error');
-          res.render('login', {
-            message: 'Auth Error',
-          });
+          res.render('login', {message: 'Auth Error'});
         }
         if (isMatch) {
           store.set('user', user);
@@ -245,10 +240,7 @@ exports.login = (req, res, next) => {
         }
       });
     } else {
-      console.log('user does not exist');
-      res.render('login', {
-        message: 'Auth Error',
-      });
+      res.render('login', {message: 'User does not exist'});
     }
   });
 };
@@ -314,94 +306,5 @@ exports.register = (req, res, next) => {
 exports.logout = (req, res) => {
   req.logout();
   req.flash('success', 'You are now logged out! 👍');
-  res.redirect('/');
-};
-
-exports.isLoggedIn = (req, res, next) => {
-  if (req.isAuthenticated()) {
-    next();
-    return;
-  }
-  req.flash('error', 'Oops! you must be logged in to do that!');
-  res.redirect('/login');
-};
-
-exports.forgot = async (req, res) => {
-  const user = await User.findOne({
-    email: req.body.email,
-  });
-
-  if (!user) {
-    req.flash('error', 'No user with that email exists!');
-    return res.redirect('/login');
-  }
-
-  user.resetPasswordToken = crypto.randomBytes(20).toString('hex');
-  user.resetPasswordExpires = Date.now() + 3600000; //1hour in miliseconds
-  await user.save();
-
-  const resetURL = `http://${req.headers.host}/account/reset/${user.resetPasswordToken}`;
-
-  // await mail.send({
-  //   user,
-  //   subject: 'Password Reset',
-  //   resetURL,
-  //   filename: 'password-reset'
-  // });
-
-  req.flash('success', `You have been emailed a password reset link.`);
-
-  res.redirect('/login');
-};
-
-exports.reset = async (req, res) => {
-  const user = await User.findOne({
-    resetPasswordToken: req.params.token,
-    resetPasswordExpires: {
-      $gt: Date.now(),
-    },
-  });
-  if (!user) {
-    req.flash('error', 'Password reset token is invalid or has expired');
-    res.redirect('/login');
-  }
-
-  res.render('reset', {
-    title: 'Reset Your Password',
-  });
-};
-
-exports.confirmedPasswords = (req, res, next) => {
-  if (req.body.password === req.body['password-confirm']) {
-    next(); //move to next middleware
-    return;
-  }
-
-  req.flash('error', 'Passwords do not match!');
-  res.redirect('back');
-};
-
-exports.update = async (req, res) => {
-  const user = await User.findOne({
-    resetPasswordToken: req.params.token,
-    resetPasswordExpires: {
-      $gt: Date.now(),
-    },
-  });
-  if (!user) {
-    req.flash('error', 'Password reset token is invalid or has expired');
-    res.redirect('/login');
-  }
-
-  const setPassword = promisify(user.setPassword, user);
-  await setPassword(req.body.password);
-  user.resetPasswordExpires = undefined;
-  user.resetPasswordToken = undefined;
-  const updatedUser = await user.save();
-  await req.login(updatedUser);
-  req.flash(
-    'success',
-    ' 💃🏿 Your password has been reset!  You are now logged in'
-  );
   res.redirect('/');
 };
