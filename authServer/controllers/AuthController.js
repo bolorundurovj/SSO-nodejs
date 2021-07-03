@@ -71,9 +71,11 @@ const allowedOrigins = {
   'http://localhost:8080': false,
 };
 
+//
 const fillIntrmTokenCache = (origin, id, intrmToken) => {
   intrmTokenCache[intrmToken] = [id, originAppName[origin]];
 };
+//
 const storeApplicationInCache = (origin, id, intrmToken) => {
   if (sessionApp[id] == null) {
     sessionApp[id] = {
@@ -124,7 +126,6 @@ exports.verifySSOToken = async (req, res, next) => {
   const { ssoToken } = req.query;
   // if the application token is not present or ssoToken request is invalid
   // if the ssoToken is not present in the cache some is
-  // smart.
   // console.log(appToken, ssoToken, intrmTokenCache);
   if (
     appToken == null ||
@@ -137,7 +138,9 @@ exports.verifySSOToken = async (req, res, next) => {
   }
 
   // if the appToken is present and check if it's valid for the application
+  //sso_consumer||simple_sso_consumer
   const appName = intrmTokenCache[ssoToken][1];
+  //user._id
   const globalSessionToken = intrmTokenCache[ssoToken][0];
   // If the appToken is not equal to token given during the sso app registraion or later stage than invalid
   if (
